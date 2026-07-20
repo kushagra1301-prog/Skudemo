@@ -57,6 +57,12 @@ with col2:
         all_columns,
     )
 
+history_cols = st.multiselect(
+    "Optional: Last 6 months actuals/history column(s) — shown for context on flagged SKUs "
+    "(select in chronological order, e.g. 6 months ago → last month)",
+    all_columns,
+)
+
 st.subheader("Options")
 opt1, opt2 = st.columns(2)
 with opt1:
@@ -82,6 +88,8 @@ def to_numeric_sum(frame, cols):
 work["_PBU_Total"] = to_numeric_sum(work, pbu_cols)
 work["_Current_Total"] = to_numeric_sum(work, current_cols)
 work["_EOS_Date"] = pd.to_datetime(work[eos_col], errors="coerce")
+if history_cols:
+    work["_History_Total"] = to_numeric_sum(work, history_cols)
 
 as_of_ts = pd.Timestamp(as_of_date)
 
@@ -94,11 +102,17 @@ mask = (
 
 result = work.loc[mask].copy()
 
-# Friendly output columns: original SKU/EOS + computed totals + original mapped cols
-display_cols = [sku_col, eos_col] + pbu_cols + current_cols + ["_PBU_Total", "_Current_Total"]
+# Friendly output columns: original SKU/EOS + history + computed totals + original mapped cols
+display_cols = [sku_col, eos_col] + history_cols + pbu_cols + current_cols
+display_cols += ["_History_Total"] if history_cols else []
+display_cols += ["_PBU_Total", "_Current_Total"]
 display_cols = list(dict.fromkeys(display_cols))  # de-dupe, keep order
 result_display = result[display_cols].rename(
-    columns={"_PBU_Total": "PBU Forecast (sum)", "_Current_Total": "Current Forecast (sum)"}
+    columns={
+        "_PBU_Total": "PBU Forecast (sum)",
+        "_Current_Total": "Current Forecast (sum)",
+        "_History_Total": "Last 6 Months Actuals (sum)",
+    }
 )
 
 m1, m2, m3 = st.columns(3)
@@ -134,6 +148,20 @@ else:
             file_name="flagged_zero_forecast_skus.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
+
+    # ---------- Last 6 months trend for flagged SKUs ----------
+    if history_cols:
+        st.subheader("📈 Last 6 months actuals — flagged SKUs")
+        st.caption(
+            "Shows actual history for each flagged SKU, in the column order you selected above. "
+            "Useful for spotting whether the SKU was already trending down before forecast hit zero."
+        )
+        trend = result[[sku_col] + history_cols].copy()
+        trend[history_cols] = trend[history_cols].apply(pd.to_numeric, errors="coerce")
+        if treat_blank_as_zero:
+            trend[history_cols] = trend[history_cols].fillna(0)
+        trend = trend.set_index(sku_col)
+        st.line_chart(trend.T)
 
 st.divider()
 st.caption(
